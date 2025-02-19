@@ -1,29 +1,27 @@
-from math import (log, log10, floor, ceil, sqrt,  # noqa  # type: ignore
-                  asin, acos, atan, atan2,  # type: ignore
-                  sin, cos, tan,  # type: ignore
-                  pi)  # type: ignore
-from pygame import (event, font, time,
-                    Color, Surface,
-                    KEYDOWN)
-from collections.abc import Sequence
 from time import time as unixtime
-from functools import cache
-from random import random  # noqa  # type: ignore
 from pathlib import Path
 
+from pygame import (event, font, time,
+                    Color, Surface,
+                    KEYDOWN, KMOD_NONE, KMOD_CTRL)
 
-__all__ = ["trans_m_to_p", "logf", "get_command_color",
+
+__all__ = ["logf", "setup", "get_command_color", "mlog_to_python",
            "TextInputManager", "TextInputVisualizer",
            "ColorValue",
            "app_path"]
 
 
-ColorValue = Color | int | str | Sequence[int]
+ColorValue = Color | int | str | tuple[int, int, int] | tuple[int, int, int, int]
 
 app_path: Path = Path(__file__).parent
 
 
 class Vector2i:
+    """
+    Pair os `int`s
+    """
+
     x: int
     y: int
 
@@ -58,22 +56,25 @@ class Vector2i:
     def yx(self, a: tuple[int, int]):
         self.y, self.x = a
 
-    def update(self, x: int | tuple[int, int], y: int | None = None):
+    def update(self, x: int, y: int):
         "Set new position"
-        if isinstance(x, tuple):
-            self.x, self.y = x
-        elif isinstance(y, int):
-            self.x = x
-            self.y = y
-        else:
-            raise TypeError('Wrong types')
+        self.x = x
+        self.y = y
 
 
 class TextInputManager:
+    """
+    Class that holds cursor position, file data and other stuff for writing text
+    """
+
+    value: list[str]
+    cursor_pos: Vector2i
+    filename: str | Path | None
+
     def __init__(self,
                  initial: list[str] | None = None):
-        self.value: list[str] = initial if initial is not None else [""]
-        self.cursor_pos: Vector2i = Vector2i(len(self.value[-1]), len(self)-1)
+        self.value = initial if initial is not None else [""]
+        self.cursor_pos = Vector2i(len(self.value[-1]), len(self)-1)
 
     def __str__(self) -> str:
         return "\n".join(self.value)
@@ -83,6 +84,7 @@ class TextInputManager:
 
     @property
     def cur_line(self):
+        "Current cursor vertical position"
         return self.value[self.cursor_pos.y]
 
     @cur_line.setter
@@ -91,6 +93,7 @@ class TextInputManager:
 
     @property
     def left(self) -> list[str]:
+        "Everything to the left of the cursor"
         return [*self.value[:self.cursor_pos.y],
                 self.cur_line[:self.cursor_pos.x]]
 
@@ -102,36 +105,65 @@ class TextInputManager:
 
     @property
     def right(self) -> list[str]:
+        "Everything to the right of the cursor"
         return [self.cur_line[self.cursor_pos.x:],
                 *self.value[self.cursor_pos.y+1:]]
 
-    # @right.setter
-    # def right(self, a: list[str]) -> list[str]:
-    #     self.value[:self.cursor_pos.y]
-    #     self.cur_line = self.cur_line[self.cursor_pos.x:]
+    @right.setter
+    def right(self, a: list[str]) -> None:
+        self.value = [*self.left[:-1],
+                      self.left[-1] + a[0],
+                      *a[1:]]
+
+    def open(self, file: str | Path):
+        self.filename = file
+        with open(file, "r", encoding="utf-8") as f:
+            self.value = f.read().splitlines()
+            self.cursor_pos.update(0, 0)
+        return self
+
+    def save(self, file: str | Path | None = None) -> "TextInputManager":
+        if file is None:
+            if self.filename is None:
+                raise TypeError('There must be either valid `file` argument or `filename` variable set')
+            file = self.filename
+
+        with open(file, "w", encoding="utf-8") as f:
+            f.write("\n".join(self.value))
+        return self
 
     def update(self, events: list[event.Event]) -> None:
+        "Processes events"
         for e in events:
             if e.type == KEYDOWN:
                 self._process_keydown(e)
 
     def _process_keydown(self, e: event.Event) -> None:
+        if e.mod & KMOD_CTRL:
+            match e.key:
+                case 115:  # K_S
+                    self.save()
+                # case 111:  # K_O
+                #     self.open(self.filename)
+                case _:
+                    pass
+        elif e.mod != KMOD_NONE:
+            pass
+
         match e.key:
             case 8:                      # K_BACKSPACE
                 if self.cursor_pos.x > 0:
-                    self.cur_line = self.cur_line[:self.cursor_pos.x][:-1] +\
-                        self.cur_line[self.cursor_pos.x:]
+                    self.cur_line = self.cur_line[:self.cursor_pos.x][:-1] + self.cur_line[self.cursor_pos.x:]
                     self.cursor_pos.x -= 1
                 elif self.cursor_pos.y > 0:
                     right_part: str = self.cur_line
                     self.value.pop(self.cursor_pos.y)
                     next_cursor_pos: tuple[int, int] = (len(self.value[self.cursor_pos.y-1]), self.cursor_pos.y-1)
                     self.value[self.cursor_pos.y-1] += right_part
-                    self.cursor_pos.update(next_cursor_pos)
+                    self.cursor_pos.update(*next_cursor_pos)
             case 127:                    # K_DELETE
                 if self.cursor_pos.x < len(self.cur_line):
-                    self.cur_line = self.cur_line[:self.cursor_pos.x] +\
-                        self.cur_line[self.cursor_pos.x:][1:]
+                    self.cur_line = self.cur_line[:self.cursor_pos.x] + self.cur_line[self.cursor_pos.x:][1:]
                 elif self.cursor_pos.y < len(self)-1:
                     left_part: str = self.value[self.cursor_pos.y+1]
                     self.value.pop(self.cursor_pos.y+1)
@@ -155,12 +187,12 @@ class TextInputManager:
                     self.cursor_pos.update(0, 0)
             case 1073741905:             # K_DOWN
                 if self.cursor_pos.y < len(self)-1:
-                    self.cursor_pos.y = min(self.cursor_pos.y, len(self))
+                    self.cursor_pos.y = min(self.cursor_pos.y, len(self)-1)
                     self.cursor_pos.y += 1
                 elif self.cursor_pos.x < len(self.cur_line):
                     self.cursor_pos.update(len(self.value[-1]), len(self)-1)
             case 1073741901:             # K_END
-                self.cursor_pos.update
+                self.cursor_pos.update(len(self.value[-1]), len(self)-1)
             case 1073741898:             # K_HOME
                 self.cursor_pos.update(0, 0)
             case 13:                     # K_RETURN
@@ -172,11 +204,19 @@ class TextInputManager:
                 if e.unicode.isprintable() and e.unicode:  # UNICODE
                     self.cur_line = self.cur_line[:self.cursor_pos.x] + e.unicode + self.cur_line[self.cursor_pos.x:]
                     self.cursor_pos.x += 1
+                elif e.key in (1073742048, 1073742049, 1073742050, 1073742051,
+                               1073742052, 1073742053, 1073742054, 1073742055,
+                               27,):  # ESC key and keymods
+                    pass
                 else:
-                    print(f"Unknown key {event.event_name(e.key)} with repr {e.unicode}")
+                    print(f"Unknown key {event.event_name(e.key)}[{e.key}] with repr {e.unicode}")
 
 
 class TextInputVisualizer:
+    """
+    Visual interface for Textinput instance
+    """
+
     def __init__(self,
                  manager: TextInputManager | None = None,
                  font_object: font.Font | None = None,
@@ -187,7 +227,7 @@ class TextInputVisualizer:
                  cursor_color: ColorValue = 0):
 
         self.manager: TextInputManager = TextInputManager() if manager is None else manager
-        self._font_object: font.FontType = font.Font(font.get_default_font(), 25) if font_object is None else font_object
+        self._font_object: font.Font = font.Font(font.get_default_font(), 25) if font_object is None else font_object
         self._antialias: bool = antialias
         self._font_colorColor: ColorValue = font_color
 
@@ -202,6 +242,12 @@ class TextInputVisualizer:
         self._surface: Surface = Surface((self._cursor_width, self._font_object.get_height()))
         self._rerender_required: bool = True
 
+    def __str__(self) -> str:
+        return str(self.manager)
+
+    def __len__(self) -> int:
+        return len(self.manager)
+
     @property
     def value(self) -> list[str]:
         return self.manager.value
@@ -209,16 +255,6 @@ class TextInputVisualizer:
     @value.setter
     def value(self, v: list[str]):
         self.manager.value = v
-
-    def __str__(self) -> str:
-        return str(self.manager)
-
-    # @property
-    # def surface(self):
-    #     if self._rerender_required:
-    #         self._rerender()
-    #         self._rerender_required = False
-    #     return self._surface
 
     @property
     def antialias(self):
@@ -271,7 +307,7 @@ class TextInputVisualizer:
         return self._cursor_color
 
     @cursor_color.setter
-    def cursor_color(self, v: list[int]):
+    def cursor_color(self, v: ColorValue):
         self._cursor_color = v
         self._require_rerender()
 
@@ -282,6 +318,22 @@ class TextInputVisualizer:
     @cursor_blink_interval.setter
     def cursor_blink_interval(self, v: int):
         self._cursor_blink_interval = v
+
+    @property
+    def filename(self):
+        return self.manager.filename
+
+    @filename.setter
+    def filename(self, a: str | Path):
+        self.manager.filename = a
+
+    def open(self, file: str | Path) -> "TextInputVisualizer":
+        self.manager.open(file)
+        return self
+
+    def save(self, file: str | Path | None = None) -> "TextInputVisualizer":
+        self.manager.save(file)
+        return self
 
     def update(self, events: list[event.Event]):
         value_before = self.manager.value
@@ -333,13 +385,8 @@ def logf(err: str | Exception, warn: int = 0):
         f.write(f'[{warn_level}]-{str(unixtime())}:\n{err}\n\n')
 
 
-@cache
-def trans_m_to_p(a: str):
-    return mlog_to_python(a)
-    # return mlog_to_lambda(a)
-
-
-def dot(g: tuple[int, int, int], x: float, y: float):
+def dot(g: tuple[int, int], x: float, y: float):
+    "Dot product"
     return g[0] * x + g[1] * y
 
 
@@ -380,21 +427,34 @@ def raw2d(seed: int, x: float, y: float) -> float:
     t1: float = 0.5 - x1**2 - y1**2
     t2: float = 0.5 - x2**2 - y2**2
 
-    return 70*sum(((0 if t0 < 0 else t0**4 * dot(((1, 1, 0), (-1, 1, 0), (1, -1, 0), (-1, -1, 0),
-                                                  (1, 0, 1), (-1, 0, 1), (1, 0, -1), (-1, 0, -1),
-                                                  (0, 1, 1), (0, -1, 1), (0, 1, -1), (0, -1, -1)
+    return 70*sum(((0 if t0 < 0 else t0**4 * dot(((1, 1), (-1, 1), (1, -1), (-1, -1),
+                                                  (1, 0), (-1, 0), (1,  0), (-1,  0),
+                                                  (0, 1), (0, -1), (0,  1), (0,  -1)
                                                   )[perm(seed, ii + perm(seed, jj)) % 12],           x0, y0)),
-                   (0 if t1 < 0 else t1**4 * dot(((1, 1, 0), (-1, 1, 0), (1, -1, 0), (-1, -1, 0),
-                                                  (1, 0, 1), (-1, 0, 1), (1, 0, -1), (-1, 0, -1),
-                                                  (0, 1, 1), (0, -1, 1), (0, 1, -1), (0, -1, -1)
+                   (0 if t1 < 0 else t1**4 * dot(((1, 1), (-1, 1), (1, -1), (-1, -1),
+                                                  (1, 0), (-1, 0), (1,  0), (-1,  0),
+                                                  (0, 1), (0, -1), (0,  1), (0,  -1)
                                                   )[perm(seed, ii + i1 + perm(seed, jj + j1)) % 12], x1, y1)),
-                   (0 if t2 < 0 else t2**4 * dot(((1, 1, 0), (-1, 1, 0), (1, -1, 0), (-1, -1, 0),
-                                                  (1, 0, 1), (-1, 0, 1), (1, 0, -1), (-1, 0, -1),
-                                                  (0, 1, 1), (0, -1, 1), (0, 1, -1), (0, -1, -1)
+                   (0 if t2 < 0 else t2**4 * dot(((1, 1), (-1, 1), (1, -1), (-1, -1),
+                                                  (1, 0), (-1, 0), (1,  0), (-1,  0),
+                                                  (0, 1), (0, -1), (0,  1), (0,  -1)
                                                   )[perm(seed, ii + 1 + perm(seed, jj + 1)) % 12],   x2, y2))))
 
 
-def get_command_color(word: str) -> ColorValue:
+def setup():
+    "Imports everything for correct translation to mlog"
+
+    exec("""from math import (log, log10, floor, ceil, sqrt,
+                              asin, acos, atan, atan2,
+                              sin, cos, tan, pi)\
+            \nfrom random import random\
+            \nfrom pygame import draw\
+            \nfrom mlog_lib import raw2d""")
+    with open(app_path/'log.txt', 'w', encoding="utf-8") as f:
+        f.write('')
+
+
+def get_command_color(word: str) -> tuple[int, int, int]:
     """return color of command\n
     I/O - #a08a8a\n
     flush - #d4816b\n
@@ -580,188 +640,3 @@ def mlog_to_python(code: str) -> str:
 
         case _:
             return "NotImplemented"
-
-
-"""
-def mlog_to_lambda(code: str) -> Callable[..., object]:
-    \"""Transforms Mlog code(from processors from Mindustry) to python code.\n
-    args[0] is the name of command\n
-    args[1] is the type of command if command is draw or op, else it is first arg\n
-    other args is just args\"""
-
-    args: list[str] = code.split()
-
-    match args[0]:
-        case "read":
-            return f"{args[1]} = {args[2]}[{args[3]}]"
-        case "write":
-            return f"{args[2]}[{args[3]}] = {args[1]}"
-        case "draw":
-            match args[1]:
-                case "clear":
-                    return f"processor_surface.fill(({int(args[2])}, {int(args[3])}, {int(args[4])}))"
-                case "color":
-                    return f"processor_color = ({args[2]}, {args[3]}, {args[4]}, {args[5]})"
-                case "col":
-                    return f"processor_color = ({int(args[2][1:3], base=16)}, {int(args[2][3:5], base=16)}, {int(args[2][5:7], base=16)})"
-                case "stroke":
-                    return f"processor_width = {args[2]}"
-                case "line":
-                    return f"draw.line(processor_surface, processor_color, ({args[2]}, {args[3]}), ({args[4]}, {args[5]}), processor_width)"
-                case "rect":
-                    return f"draw.rect(processor_surface, processor_color, ({args[2]}, {args[3]}, {args[4]}, {args[5]}))"
-                case "lineRect":
-                    return f"draw.rect(processor_surface, processor_color, ({args[2]}, {args[3]}, {args[4]}, {args[5]}), processor_width)"
-                case "poly":
-                    return f"draw.polygon(processor_surface, processor_color, [({args[2]}+cos(pi*2/{args[4]}*j+{args[6]})*{args[5]}, {args[3]}+sin(pi*2/{args[4]}*j+{args[6]})*{args[5]}) for j in range({args[4]})])"
-                case "linePoly":
-                    return f"draw.polygon(processor_surface, processor_color, [({args[2]}+cos(pi*2/{args[4]}*j+{args[6]})*{args[5]}, {args[3]}+sin(pi*2/{args[4]}*j+{args[6]})*{args[5]}) for j in range({args[4]})], processor_width)"
-                case "triangle":
-                    return f"draw.polygon(processor_surface, processor_color, (({args[2]}, {args[3]}), ({args[4]}, {args[5]}), ({args[6]}, {args[7]})))"
-                case "image":
-                    return "NotImplemented"
-                case _:
-                    return "NotImplemented"
-        case "print":
-            return f"processor_textbuffer += str({args[1]})"
-
-        case "drawflush":
-            return f"{args[1]}.blit(processor_surface, (0, 0))"
-        case "printflush":
-            return ''  # TODO not to do nothing
-
-        case "set":
-            return f"global {args[1]};{args[1]} = {args[2]}"
-        case "op":
-            a = float(args[2])
-            b = float(args[3])
-
-            opeq: float | int = 0
-
-            match args[1]:
-                case "add":
-                    opeq = a + b
-                case "sub":
-                    opeq = a - b
-                case "mul":
-                    opeq = a * b
-                case "div":
-                    opeq = a / b
-                case "idiv":
-                    opeq = a // b
-                case "mod":
-                    opeq = a % b
-                case "pow":
-                    opeq = a ** b
-
-                case "equal":
-                    opeq = 1 if abs(a - b) < 0.000001 else 0
-                case "notEqual":
-                    opeq = 0 if abs(a - b) < 0.000001 else 1
-                case "land":
-                    opeq = 1 if a != 0 and b != 0 else 0
-                case "lessThan":
-                    opeq = 1 if a < b else 0
-                case "lessThanEq":
-                    opeq = 1 if a <= b else 0
-                case "greaterThan":
-                    opeq = 1 if a > b else 0
-                case "greaterThanEq":
-                    opeq = 1 if a >= b else 0
-                case "strictEqual":
-                    opeq = a is b
-
-                case "shl":
-                    opeq = int(a) << int(b)
-                case "shr":
-                    opeq = int(a) >> int(b)
-                case "or":
-                    opeq = int(a) | int(b)
-                case "and":
-                    opeq = int(a) & int(b)
-                case "xor":
-                    opeq = int(a) ^ int(b)
-                case "not":
-                    opeq = ~int(a)
-
-                case "max":
-                    opeq = max(a, b)
-                case "min":
-                    opeq = min(a, b)
-                case "angle":
-                    ang = atan2(a, b) * 180 / pi
-                    if ang < 0:
-                        ang += 360
-                    opeq = ang
-                case "angleDiff":
-                    opeq = min(a % 360 - b % 360 + 360 if (a % 360 - b % 360) < 0 else a % 360 - b % 360,
-                               b % 360 - a % 360 + 360 if (b % 360 - a % 360) < 0 else b % 360 - a % 360)
-                case "len":
-                    opeq = abs(a - b)
-                case "noise":
-                    opeq = raw2d(0, a, b)
-                case "abs":
-                    opeq = abs(a)
-                case "log":
-                    opeq = log(a)
-                case "log10":
-                    opeq = log10(a)
-                case "floor":
-                    opeq = floor(a)
-                case "ceil":
-                    opeq = ceil(a)
-                case "sqrt":
-                    opeq = sqrt(a)
-                case "rand":
-                    opeq = random() * a
-
-                case "sin":
-                    opeq = sin(a * 0.017453292519943295)
-                case "cos":
-                    opeq = cos(a * 0.017453292519943295)
-                case "tan":
-                    opeq = tan(a * 0.017453292519943295)
-
-                case "asin":
-                    opeq = asin(a) * 0.017453292519943295
-                case "acos":
-                    opeq = acos(a) * 0.017453292519943295
-                case "atan":
-                    opeq = atan(a) * 0.017453292519943295
-                case _:
-                    opeq = a
-
-            exec(f"a = {opeq}")
-            return lambda: 0
-
-        case "wait":
-            return f"sleep({args[1]})"
-        case "stop":
-            return "1/0"
-        case "end":
-            return "processor_counter = 0"
-        case "jump":
-            match args[2]:
-                case "equal":
-                    cond = f"{args[3]} == {args[4]}"
-                case "notEqual":
-                    cond = f"{args[3]} != {args[4]}"
-                case "lessThan":
-                    cond = f"{args[3]} < {args[4]}"
-                case "lessThanEq":
-                    cond = f"{args[3]} <= {args[4]}"
-                case "greaterThan":
-                    cond = f"{args[3]} > {args[4]}"
-                case "greaterThanEq":
-                    cond = f"{args[3]} >= {args[4]}"
-                case "strictEqual":
-                    cond = "False"
-                case "always":
-                    cond = "True"
-                case _:
-                    return "NotImplemented"
-            return f"processor_counter = {args[1]}-1 if {cond} else processor_counter"
-
-        case _:
-            return "NotImplemented"
-"""

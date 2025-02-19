@@ -1,2 +1,2 @@
-pygame-ce==2.5.1
+pygame-ce==2.5.3
 https://github.com/acemany/pyndustric/archive/refs/heads/master.zip

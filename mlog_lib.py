@@ -217,6 +217,8 @@ class TextInputVisualizer:
     Visual interface for Textinput instance
     """
 
+    cursor_blink_interval: int
+
     def __init__(self,
                  manager: TextInputManager | None = None,
                  font_object: font.Font | None = None,
@@ -229,10 +231,10 @@ class TextInputVisualizer:
         self.manager: TextInputManager = TextInputManager() if manager is None else manager
         self._font_object: font.Font = font.Font(font.get_default_font(), 25) if font_object is None else font_object
         self._antialias: bool = antialias
-        self._font_colorColor: ColorValue = font_color
+        self._font_color: ColorValue = font_color
 
         self._clock: time.Clock = time.Clock()
-        self._cursor_blink_interval: float = cursor_blink_interval
+        self.cursor_blink_interval = cursor_blink_interval
         self._cursor_visible: bool = False
         self._last_blink_toggle: float = 0
 
@@ -253,16 +255,16 @@ class TextInputVisualizer:
         return self.manager.value
 
     @value.setter
-    def value(self, v: list[str]):
-        self.manager.value = v
+    def value(self, a: list[str]):
+        self.manager.value = a
 
     @property
     def antialias(self):
         return self._antialias
 
     @antialias.setter
-    def antialias(self, v: bool):
-        self._antialias = v
+    def antialias(self, a: bool):
+        self._antialias = a
         self._require_rerender()
 
     @property
@@ -270,8 +272,8 @@ class TextInputVisualizer:
         return self._font_color
 
     @font_color.setter
-    def font_color(self, v: list[int]):
-        self._font_color = v
+    def font_color(self, a: ColorValue):
+        self._font_color = a
         self._require_rerender()
 
     @property
@@ -279,17 +281,25 @@ class TextInputVisualizer:
         return self._font_object
 
     @font_object.setter
-    def font_object(self, v: font.Font):
-        self._font_object = v
+    def font_object(self, a: font.Font):
+        self._font_object = a
         self._require_rerender()
+
+    @property
+    def cursor(self):
+        return self.manager.cursor_pos
+
+    @cursor.setter
+    def cursor(self, a: Vector2i):
+        self.manager.cursor_pos = a
 
     @property
     def cursor_visible(self):
         return self._cursor_visible
 
     @cursor_visible.setter
-    def cursor_visible(self, v: bool):
-        self._cursor_visible = v
+    def cursor_visible(self, a: bool):
+        self._cursor_visible = a
         self._last_blink_toggle = 0
         self._require_rerender()
 
@@ -298,8 +308,8 @@ class TextInputVisualizer:
         return self._cursor_width
 
     @cursor_width.setter
-    def cursor_width(self, v: int):
-        self._cursor_width = v
+    def cursor_width(self, a: int):
+        self._cursor_width = a
         self._require_rerender()
 
     @property
@@ -307,17 +317,9 @@ class TextInputVisualizer:
         return self._cursor_color
 
     @cursor_color.setter
-    def cursor_color(self, v: ColorValue):
-        self._cursor_color = v
+    def cursor_color(self, a: ColorValue):
+        self._cursor_color = a
         self._require_rerender()
-
-    @property
-    def cursor_blink_interval(self):
-        return self._cursor_blink_interval
-
-    @cursor_blink_interval.setter
-    def cursor_blink_interval(self, v: int):
-        self._cursor_blink_interval = v
 
     @property
     def filename(self):
@@ -343,8 +345,8 @@ class TextInputVisualizer:
 
         self._clock.tick()
         self._last_blink_toggle += self._clock.get_time()
-        if self._last_blink_toggle > self._cursor_blink_interval:
-            self._last_blink_toggle %= self._cursor_blink_interval
+        if self._last_blink_toggle > self.cursor_blink_interval:
+            self._last_blink_toggle %= self.cursor_blink_interval
             self._cursor_visible = not self._cursor_visible
 
             self._require_rerender()
@@ -357,21 +359,9 @@ class TextInputVisualizer:
     def _require_rerender(self):
         self._rerender_required = True
 
-    # def _rerender(self):
-    #     rendered_surface = self.font_object.render(self.manager.value + " ",
-    #                                                self.antialias,
-    #                                                self.font_color)
-    #     w, h = rendered_surface.get_size()
-    #     self._surface = Surface((w + self._cursor_width, h))
-    #     self._surface = self._surface.convert_alpha(rendered_surface)
-    #     self._surface.fill((0, 0, 0, 0))
-    #     self._surface.blit(rendered_surface, (0, 0))
-
-    #     if self._cursor_visible:
-    #         str_left_of_cursor = self.manager.value[:self.manager.cursor_pos]
-    #         cursor_y = self.font_object.size(str_left_of_cursor)[0]
-    #         cursor_rect = Rect(cursor_y, 0, self._cursor_width, self.font_object.get_height())
-    #         self._surface.fill(self._cursor_color, cursor_rect)
+    def _render(self):
+        for i in range(len(self.value)):
+            self._surface.blit(self._font_object.render(f"{i+1}", True, Ctxt), (self._h_offset, font_height*i+self._v_offset))
 
 
 def logf(err: str | Exception, warn: int = 0):
@@ -381,7 +371,7 @@ def logf(err: str | Exception, warn: int = 0):
     """
 
     warn_level = "IWE"[warn]
-    with open(app_path/'log.txt', 'a') as f:
+    with open(app_path/'log.txt', 'a', encoding='utf-8') as f:
         f.write(f'[{warn_level}]-{str(unixtime())}:\n{err}\n\n')
 
 
@@ -514,12 +504,13 @@ def mlog_to_python(code: str) -> str:
         case "drawflush":
             return f"{args[1]}.blit(processor_surface, (0, 0))"
         case "printflush":
-            return ''  # TODO not to do nothing
+            return ''
 
         case "set":
             return f"global {args[1]};{args[1]} = {args[2]}"
         case "op":
             opeq: str = "0"
+            args[3], args[4] = f'float({args[3]})', f'float({args[4]})'
             match args[1]:
                 case "add":
                     opeq = f"{args[3]} + {args[4]}"
@@ -551,7 +542,7 @@ def mlog_to_python(code: str) -> str:
                 case "greaterThanEq":
                     opeq = f"{args[3]} >= {args[4]}"
                 case "strictEqual":
-                    "0"
+                    opeq = "0"
 
                 case "shl":
                     opeq = f"{args[3]} << {args[4]}"
@@ -623,13 +614,13 @@ def mlog_to_python(code: str) -> str:
                 case "notEqual":
                     cond = f"{args[3]} != {args[4]}"
                 case "lessThan":
-                    cond = f"{args[3]} < {args[4]}"
+                    cond = f"float({args[3]}) < float({args[4]})"
                 case "lessThanEq":
-                    cond = f"{args[3]} <= {args[4]}"
+                    cond = f"float({args[3]}) <= float({args[4]})"
                 case "greaterThan":
-                    cond = f"{args[3]} > {args[4]}"
+                    cond = f"float({args[3]}) > float({args[4]})"
                 case "greaterThanEq":
-                    cond = f"{args[3]} >= {args[4]}"
+                    cond = f"float({args[3]}) >= float({args[4]})"
                 case "strictEqual":
                     cond = "False"
                 case "always":

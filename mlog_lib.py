@@ -1,9 +1,26 @@
 from time import time as unixtime
+from sys import exit as sysexit
+from threading import Thread
+from math import ceil, log10
+from platform import system
 from pathlib import Path
 
-from pygame import (event, font, time,
-                    Color, Surface,
-                    KEYDOWN, KMOD_NONE, KMOD_CTRL)
+from tkinter import Tk
+from tkinter.filedialog import askopenfilename, asksaveasfilename
+
+from pygame import (display, draw, event, font, key, mouse, time,
+                    Color, Surface, quit as squit,
+                    KEYDOWN, KMOD_CTRL, KMOD_SHIFT,
+                    BUTTON_LEFT, BUTTON_WHEELDOWN, BUTTON_WHEELUP,
+                    FINGERDOWN, MOUSEBUTTONDOWN,
+                    SRCALPHA)
+
+from pygments.token import Keyword, Name, Comment, String, Error, \
+    Number, Operator, Generic, Whitespace, Punctuation, \
+    _TokenType  # type: ignore
+from pygments.lexers import guess_lexer, guess_lexer_for_filename, get_lexer_for_filename
+from pygments.lexer import Lexer
+from pygments import lex
 
 
 __all__ = ["logf", "setup", "get_command_color", "mlog_to_python",
@@ -17,28 +34,105 @@ ColorValue = Color | int | str | tuple[int, int, int] | tuple[int, int, int, int
 app_path: Path = Path(__file__).parent
 
 
+COLORS: dict[_TokenType | None, str] = {
+    Whitespace:          '#ffffff',
+    Comment.Single:      '#6a9955',
+    Comment.Hashbang:    '#6a9955',
+
+    Name:                '#9cdcfe',
+    Name.Builtin:        '#dcdcaa',
+    Name.Builtin.Pseudo: '#9cdcfe',
+    Name.Namespace:      '#4ec9b0',
+    Name.Class:          '#4ec9b0',
+    Name.Exception:      '#4ec9b0',
+    Name.Function:       '#dcdcaa',
+    Name.Function.Magic: '#dcdcaa',
+    Name.Decorator:      '#4ec9b0',
+    Name.Variable.Magic: '#9cdcfe',
+    Number.Integer:      '#b5cea8',
+    Number.Float:        '#b5cea8',
+    Number.Hex:          '#569cd6',
+    Keyword:             '#c586c0',
+    Keyword.Namespace:   '#c586c0',
+    Keyword.Constant:    '#569cd6',
+
+    Punctuation:         '#ffffff',
+    Operator:            '#ffd700',
+    Operator.Word:       '#569cd6',
+
+    String:              '#ce9178',
+    String.Single:       '#ce9178',
+    String.Double:       '#ce9178',
+    String.Escape:       '#d7ba7d',
+    String.Interpol:     '#ffd700',
+    String.Affix:        '#569cd6',
+    String.Doc:          '#ce9178',
+
+    Generic.Deleted:     '#f14c4c',
+    Generic.Error:       '#f14c4c',
+    Error:               '#f14c4c',
+}
+
+Cbg: Color = Color(18, 18, 18)
+Cfg: Color = Color(36, 36, 36)
+Ctxt: Color = Color(207, 212, 218)
+Ctxt2: Color = Color(164, 161, 171)
+Coutline: Color = Color(255, 255, 255)
+Cerror: Color = Color(255, 15, 15)
+Cwarn: Color = Color(240, 255, 0)
+
+font.init()
+
+font_height: int = 12
+FONT: font.Font = font.SysFont('Monospace', font_height, bold=True)
+font_width: float = FONT.size("ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # font is not monospaced...
+                              "abcdefghijklmnopqrstuvwxyz"
+                              "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
+                              "абвгдеёжзийклмнопрстуфхцчшщъыьэюя")[0]/118
+font_height += 2
+
+
 class Vector2i:
     """
     Pair os `int`s
     """
 
-    x: int
-    y: int
+    _x: int
+    _y: int
 
     def __init__(self, x: int | tuple[int, int], y: int | None = None):
-        """Just 2d vector with int as axes\n
-        Vector2i(6, 9)\n
-        Vector2i([6, 9])"""
+        """
+        Just 2d vector with int as axes\n
+        `Vector2i(6, 9)`\n
+        `Vector2i([6, 9])`
+        """
+
         if isinstance(x, tuple):
-            self.x, self.y = x
+            self._x, self.y = x
         elif isinstance(y, int):
-            self.x = x
-            self.y = y
+            self._x = x
+            self._y = y
         else:
             raise TypeError('Wrong types')
 
     def __getitem__(self, i: int) -> int:
         return (self.x, self.y)[i]
+
+    @property
+    def x(self) -> int:
+        return self._x
+
+    @x.setter
+    def x(self, a: int):
+        self._x = int(a)
+
+    @property
+    def y(self) -> int:
+        return self._y
+
+    @y.setter
+    def y(self, a: int):
+        self._y = int(a)
 
     @property
     def xy(self) -> tuple[int, int]:
@@ -69,7 +163,7 @@ class TextInputManager:
 
     value: list[str]
     cursor_pos: Vector2i
-    filename: str | Path | None
+    _filename: str | Path | None
 
     def __init__(self,
                  initial: list[str] | None = None):
@@ -81,6 +175,9 @@ class TextInputManager:
 
     def __len__(self):
         return len(self.value)
+
+    def __repr__(self) -> str:
+        return f"{len(self.value)}"
 
     @property
     def cur_line(self):
@@ -115,21 +212,36 @@ class TextInputManager:
                       self.left[-1] + a[0],
                       *a[1:]]
 
-    def open(self, file: str | Path):
-        self.filename = file
-        with open(file, "r", encoding="utf-8") as f:
-            self.value = f.read().splitlines()
+    @property
+    def filename(self) -> Path | None:
+        "File that is open currently(or to which text will save)"
+        if self._filename is None:
+            return
+        return Path(self._filename)
+
+    def open(self, file: str | Path | None = None):
+        if file == '':
+            file = askopenas()
+        if not file:
+            return
+        self._filename = file
+        with open(file, 'r', encoding='utf-8') as f:
+            self.value = f.read().split('\n')
             self.cursor_pos.update(0, 0)
         return self
 
     def save(self, file: str | Path | None = None) -> "TextInputManager":
-        if file is None:
-            if self.filename is None:
-                raise TypeError('There must be either valid `file` argument or `filename` variable set')
-            file = self.filename
+        if file == '':
+            file = asksaveas()
+        if not file:
+            if self._filename is None:
+                self._filename = asksaveas()
+                if not self._filename:
+                    return self
+            file = self._filename
 
-        with open(file, "w", encoding="utf-8") as f:
-            f.write("\n".join(self.value))
+        with open(file, 'w', encoding='utf-8') as f:
+            f.write(str(self))
         return self
 
     def update(self, events: list[event.Event]) -> None:
@@ -142,13 +254,16 @@ class TextInputManager:
         if e.mod & KMOD_CTRL:
             match e.key:
                 case 115:  # K_S
-                    self.save()
-                # case 111:  # K_O
-                #     self.open(self.filename)
+                    if e.mod & KMOD_SHIFT:
+                        Thread(target=self.save, args=('',)).start()
+                        return
+                    else:
+                        self.save()
+                case 111:  # K_O
+                    Thread(target=self.open, args=('',)).start()
+                    return
                 case _:
                     pass
-        elif e.mod != KMOD_NONE:
-            pass
 
         match e.key:
             case 8:                      # K_BACKSPACE
@@ -217,8 +332,6 @@ class TextInputVisualizer:
     Visual interface for Textinput instance
     """
 
-    cursor_blink_interval: int
-
     def __init__(self,
                  manager: TextInputManager | None = None,
                  font_object: font.Font | None = None,
@@ -228,35 +341,69 @@ class TextInputVisualizer:
                  cursor_width: int = 3,
                  cursor_color: ColorValue = 0):
 
-        self.manager: TextInputManager = TextInputManager() if manager is None else manager
+        self._manager: TextInputManager = TextInputManager() if manager is None else manager
+        self._lexer: Lexer | None = None
         self._font_object: font.Font = font.Font(font.get_default_font(), 25) if font_object is None else font_object
         self._antialias: bool = antialias
         self._font_color: ColorValue = font_color
 
+        self._h_offset: float = 0
+        self._v_offset: float = 0
+        self._linelog: int = ceil(log10(len(self.value)+1))
+
         self._clock: time.Clock = time.Clock()
-        self.cursor_blink_interval = cursor_blink_interval
+        self.cursor_blink_interval: int = cursor_blink_interval
         self._cursor_visible: bool = False
         self._last_blink_toggle: float = 0
 
         self._cursor_width: int = cursor_width
         self._cursor_color: ColorValue = cursor_color
 
-        self._surface: Surface = Surface((self._cursor_width, self._font_object.get_height()))
+        self._surface: Surface = Surface(display.get_window_size(), SRCALPHA)
         self._rerender_required: bool = True
 
+        self._try_lint()
+
     def __str__(self) -> str:
-        return str(self.manager)
+        return str(self._manager)
 
     def __len__(self) -> int:
-        return len(self.manager)
+        return len(self._manager)
 
     @property
     def value(self) -> list[str]:
-        return self.manager.value
+        return self._manager.value
 
     @value.setter
     def value(self, a: list[str]):
-        self.manager.value = a
+        self._manager.value = a
+
+    @property
+    def surface(self):
+        if self._rerender_required:
+            self._render()
+            self._rerender_required = False
+        return self._surface
+
+    @property
+    def linelog(self):
+        return self._linelog
+
+    @property
+    def h_offset(self) -> float:
+        return self._h_offset
+
+    @h_offset.setter
+    def h_offset(self, a: float):
+        self._h_offset = a
+
+    @property
+    def v_offset(self) -> float:
+        return self._v_offset
+
+    @v_offset.setter
+    def v_offset(self, a: float):
+        self._v_offset = a
 
     @property
     def antialias(self):
@@ -286,12 +433,13 @@ class TextInputVisualizer:
         self._require_rerender()
 
     @property
-    def cursor(self):
-        return self.manager.cursor_pos
+    def cursor(self) -> Vector2i:
+        return self._manager.cursor_pos
 
     @cursor.setter
     def cursor(self, a: Vector2i):
-        self.manager.cursor_pos = a
+        self._manager.cursor_pos.x = min(a[0], len(self._manager.cur_line)+1)
+        self._manager.cursor_pos.y = a[1]
 
     @property
     def cursor_visible(self):
@@ -323,24 +471,38 @@ class TextInputVisualizer:
 
     @property
     def filename(self):
-        return self.manager.filename
-
-    @filename.setter
-    def filename(self, a: str | Path):
-        self.manager.filename = a
+        return self._manager.filename
 
     def open(self, file: str | Path) -> "TextInputVisualizer":
-        self.manager.open(file)
+        self._manager.open(file)
+        self._require_rerender()
         return self
 
     def save(self, file: str | Path | None = None) -> "TextInputVisualizer":
-        self.manager.save(file)
+        self._manager.save(file)
         return self
 
+    def close(self, save: bool = True):
+        if save:
+            self.save()
+        squit()
+        sysexit()
+
+    def _try_lint(self, file: str | Path | None = None):
+        if file is None:
+            self._lexer = guess_lexer(str(self)[:1000])
+        else:
+            if self.value:
+                self._lexer = guess_lexer_for_filename(file, str(self)[:1000])()
+            else:
+                self._lexer = get_lexer_for_filename(file)
+        self._require_rerender()
+
     def update(self, events: list[event.Event]):
-        value_before = self.manager.value
-        self.manager.update(events)
-        if self.manager.value != value_before:
+        value_before = self.value
+        self._manager.update(events)
+        if self.value != value_before:
+            self._linelog = ceil(log10(len(self.value)+1))
             self._require_rerender()
 
         self._clock.tick()
@@ -351,17 +513,88 @@ class TextInputVisualizer:
 
             self._require_rerender()
 
-        if [event for event in events if event.type == KEYDOWN]:
-            self._last_blink_toggle = 0
-            self._cursor_visible = True
-            self._require_rerender()
+        for e in events:
+            if e.type == KEYDOWN:
+                self._last_blink_toggle = 0
+                self._cursor_visible = True
+                self._require_rerender()
+            elif e.type == FINGERDOWN:
+                key.start_text_input()
+            elif e.type == MOUSEBUTTONDOWN:
+                if e.button == BUTTON_WHEELDOWN and self._v_offset > -font_height*(len(self.value)-1):
+                    self._require_rerender()
+                    self._v_offset -= font_height * 2
+                elif e.button == BUTTON_WHEELUP and self._v_offset < 0:
+                    self._require_rerender()
+                    self._v_offset += font_height * 2
+                elif e.button == BUTTON_LEFT:
+                    self._require_rerender()
+                    mouse_pos = mouse.get_pos()
+                    self._manager.cursor_pos.y = max(0, min(int(mouse_pos[1]-self._v_offset)//font_height, len(self._manager)-1))
+                    self._manager.cursor_pos.x = max(0, min(int(mouse_pos[0]//font_width-self._linelog), len(self._manager.cur_line)))
 
     def _require_rerender(self):
         self._rerender_required = True
 
     def _render(self):
+        self._surface.fill((0, 0, 0, 0))
+
         for i in range(len(self.value)):
             self._surface.blit(self._font_object.render(f"{i+1}", True, Ctxt), (self._h_offset, font_height*i+self._v_offset))
+
+        draw.aaline(self._surface, Coutline, (font_width*self._linelog, 0), (font_width*self._linelog, self._surface.height))
+
+        if self._lexer is None:
+            for j, i in enumerate(self.value):
+                self._surface.blit(FONT.render(i, True, Ctxt),
+                                   (font_width*(self._linelog+0.5), font_height*j+self._v_offset))
+        else:
+            tx = ty = 0
+            for ttype, value in lex(str(self), self._lexer):
+                if '\n' in value:
+                    tx = 0
+                    ty += value.count('\n')
+                else:
+                    if value.strip():
+                        clr = get_command_color(ttype, value)
+                        self._surface.blit(FONT.render(value, True, clr),
+                                           (font_width*(self._linelog+0.5)+tx*font_width,
+                                            ty*font_height+self._v_offset, font_width*(self._linelog), font_height))
+                    tx += len(value)
+
+        if self._cursor_visible:
+            draw.rect(self._surface, (255, 255, 255),
+                      ((self.cursor.x+self._linelog+0.5)*font_width, (self.cursor.y)*font_height+self._v_offset,
+                       self._cursor_width, font_height))
+
+
+def askopenas() -> str | None:
+    "Ask the user to select a file to open"
+    root = Tk()
+    root.withdraw()
+    # root.attributes("-topmost", 1)
+    if system() == "Darwin":
+        file_path = askopenfilename(parent=root)
+    else:
+        file_types = [("All files", "*")]
+        file_path = askopenfilename(parent=root, filetypes=file_types)
+    root.update()
+
+    return file_path
+
+
+def asksaveas() -> str | None:
+    "Ask the user to select a file to save"
+    root = Tk()
+    root.withdraw()
+    # root.attributes("-topmost", 1)
+    if system() == "Darwin":
+        file_path = asksaveasfilename(parent=root)
+    else:
+        file_types = [("All files", "*")]
+        file_path = asksaveasfilename(parent=root, filetypes=file_types)
+    root.update()
+    return file_path
 
 
 def logf(err: str | Exception, warn: int = 0):
@@ -444,7 +677,7 @@ def setup():
         f.write('')
 
 
-def get_command_color(word: str) -> tuple[int, int, int]:
+def get_command_color(token: _TokenType, v: str = 'None') -> tuple[int, int, int]:
     """return color of command\n
     I/O - #a08a8a\n
     flush - #d4816b\n
@@ -452,11 +685,12 @@ def get_command_color(word: str) -> tuple[int, int, int]:
     system - #6bb2b2\n
     unknown - #4c4c4c"""
 
-    return (160, 138, 138) if word in ("read", "write", "draw", "print") else\
-           (212, 129, 107) if word in ("drawflush", "printflush") else\
-           (135, 123, 173) if word in ("set", "op") else\
-           (107, 178, 178) if word in ("wait", "stop", "end", "jump") else\
-           (76, 76, 76)
+    out = (lambda a: (a.r, a.g, a.b))(Color(COLORS.get(token, 0)))
+
+    if out[0] == out[1] == out[2] == 0:
+        print(token, f'\'{v}\'')
+
+    return out
 
 
 def mlog_to_python(code: str) -> str:

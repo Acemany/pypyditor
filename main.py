@@ -38,30 +38,49 @@ code_textarea: TextInputVisualizer = TextInputVisualizer(TextInputManager().open
                                                          FONT, True, Ctxt,
                                                          500, 2)
 
-
-processor_width: int = 1  # Width of drawn lines
-processor_color: ColorValue = 0  # Used for `draw` command
-processor_surface: Surface = Surface((176, 176))
-processor_speed: float = 1/120
-processor_counter: int = 0
-processor_textbuffer: str = ""
-processor_globals: dict[str, object] = {
-    "processor_counter": processor_counter,
-    "processor_width": processor_width,
-    "processor_color": processor_color,
-    "processor_textbuffer": processor_textbuffer,
+processor_speed: float = 1/240
+processor_context: dict[str, object] = {
+    "processor_counter": 0,
+    "processor_width": 1,
+    "processor_color": 0,
+    "processor_textbuffer": "",
+    "processor_surface": Surface((176, 176)),
+    "cell1": ["" for _ in range(64)],
 }
 
-display1: Surface = Surface(processor_surface.get_size())
+
+class Processor:
+    @property
+    def counter(self) -> int:
+        return processor_context["processor_counter"]
+
+    @counter.setter
+    def counter(self, a: int):
+        processor_context["processor_counter"] = a
+
+    @property
+    def textbuffer(self) -> str:
+        return processor_context["processor_textbuffer"]
+
+    @textbuffer.setter
+    def textbuffer(self, a: str):
+        processor_context["processor_textbuffer"] = a
+
+    @property
+    def surface(self) -> Surface:
+        return processor_context["processor_surface"]
+
+
+processor = Processor()
+display1: Surface = Surface(processor.surface.get_size())
 text_surface: Surface
-cell1: list[str] = ["" for _ in range(64)]
 decoded: list[str] = ["" for _ in range(len(code_textarea.value))]
 excepp = list[Exception]()
 mlython_str: list[str] = []
 len_decoded: int = 0
 timer: float = 0
 
-processor_surface.fill(Cbg)
+processor.surface.fill(Cbg)
 
 
 while True:
@@ -91,26 +110,26 @@ while True:
 
     if len_decoded:
         while timer >= processor_speed:
-            processor_counter %= len_decoded
+            processor.counter %= len_decoded
             timer -= processor_speed
 
-            if raw_line := mlython_str[processor_counter]:  # if not empty
+            if raw_line := mlython_str[processor.counter]:  # if not empty
                 k = raw_line.split()
                 decoded.append(tr := mlog_to_python(raw_line))
                 if k[0] == "op" and k[2] not in globals():
                     tr = f"if \"{k[2]}\" not in dir(): global {k[2]}\n{k[2]} = 0\n{tr}"
 
                 try:
-                    exec(tr, globals=processor_globals)
+                    exec(tr, processor_context)
                 except Exception as e:
                     excepp.append(e)
 
-            processor_counter = processor_counter + 1
+            processor.counter = processor.counter + 1
 
     WIN.blit(transform.flip(display1, False, True), (WIDTH/2-176, 0))
 
-    for i in excepp:
-        lineno: int = i.args[1][1] - 1 if len(i.args) > 1 else 0
+    for j, i in enumerate(excepp):
+        lineno: int = i.args[1][1] - 1 if len(i.args) > 1 else j
         draw.rect(WIN, Cerror, (WIDTH-font_width, lineno*font_height+code_textarea.v_offset, font_width, font_height))
         if mouse_pos.x >= WIDTH-font_width and len(i.args) >= 1:
             draw.rect(WIN, (Cerror[0]//4, Cerror[1]//4, Cerror[2]//4),
@@ -128,14 +147,19 @@ while True:
             WIN.blit(FONT.render(f"{i!r}", True, Ctxt2),
                      (WIDTH-FONT.size(f"{i!r}")[0]-font_width, font_height*j+code_textarea.v_offset))
 
-    WIN.blit(code_textarea.surface)
+    WIN.blit(code_textarea.surface, (0, 0))
 
-    for j, i in enumerate(processor_textbuffer.split('\n')):
+    for j, i in enumerate(processor.textbuffer.split('\n')):
         text_surface = FONT.render(i, True, (127, 255, 127))
         WIN.blit(text_surface, text_surface.get_rect(bottomright=SC_RES/2+(0, font_height*j+code_textarea.v_offset)))
-    processor_textbuffer = ""
+    processor.textbuffer = ""
 
     display.set_caption(f"{code_textarea.filename} - {len(excepp)} error{'s' if len(excepp) != 1 else ''}")
+    print(processor_context["processor_counter"],
+    processor_context["processor_width"],
+    processor_context["processor_color"],
+    processor_context["processor_textbuffer"],
+    processor_context["cell1"],)
     if False:
         WIN.blits([(FONT.render(var, True, Ctxt2), (WIDTH/2, font_height*(y+1)))
                    for y, var in enumerate((f"{i[0]} = {i[1]!r}"
@@ -143,7 +167,7 @@ while True:
                                             if i[0] not in ("__name__", "__doc__", "__package__", "__loader__", "__spec__", "__annotations__", "__builtins__", "__file__", "__cached__",
                                                             "_exit", "Path", "display", "draw", "event", "key", "mouse", "time", "transform", "copyright",
                                                             "QUIT", "Surface", "Vector2", "init", "squit", "K_ESCAPE", "Compiler", "setup", "mlog_to_python", "TextInputManager", "TextInputVisualizer", "FONT",
-                                                            "app_path", "Cbg", "Ctxt", "Ctxt2", "Cerror", "Cwarn", "font_width", "font_height", "processor_globals")))])
+                                                            "app_path", "Cbg", "Ctxt", "Ctxt2", "Cerror", "Cwarn", "font_width", "font_height", "processor_context")))])
 
     display.flip()
     delta = CLOCK.tick(60)/1000

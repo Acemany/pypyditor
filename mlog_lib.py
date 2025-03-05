@@ -83,7 +83,7 @@ Cwarn: Color = Color(240, 255, 0)
 
 font.init()
 
-font_height: int = 12
+font_height: int = 18
 FONT: font.Font = font.SysFont('Monospace', font_height, bold=True)
 font_width: float = FONT.size("ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # font is not monospaced...
                               "abcdefghijklmnopqrstuvwxyz"
@@ -542,7 +542,7 @@ class TextInputVisualizer:
         for i in range(len(self.value)):
             self._surface.blit(self._font_object.render(f"{i+1}", True, Ctxt), (self._h_offset, font_height*i+self._v_offset))
 
-        draw.aaline(self._surface, Coutline, (font_width*self._linelog, 0), (font_width*self._linelog, self._surface.height))
+        draw.aaline(self._surface, Coutline, (font_width*self._linelog, 0), (font_width*self._linelog, self._surface.get_height()))
 
         if self._lexer is None:
             for j, i in enumerate(self.value):
@@ -552,7 +552,7 @@ class TextInputVisualizer:
             tx = ty = 0
             for ttype, value in lex(str(self), self._lexer):
                 if '\n' in value:
-                    tx = 0
+                    tx = len(value.split('\n')[-1])
                     ty += value.count('\n')
                 else:
                     if value.strip():
@@ -833,7 +833,7 @@ def mlog_to_python(code: str) -> str:
                     opeq = f"atan({args[3]}) / 180*pi)"
                 case _:
                     return "NotImplemented"
-            return f"{args[2]} = {opeq}"
+            return f"_ = {opeq}; {args[2]} = _ if _ % 1 else int(_)"
 
         case "wait":
             return f"sleep({args[1]})"

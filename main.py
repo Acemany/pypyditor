@@ -1,6 +1,7 @@
 #!/usr/env/bin python
 
 from pathlib import Path
+from typing import TypedDict
 
 from pygame import (display, draw, event, key, mouse, time, transform,
                     QUIT,
@@ -38,8 +39,17 @@ code_textarea: TextInputVisualizer = TextInputVisualizer(TextInputManager().open
                                                          FONT, True, Ctxt,
                                                          500, 2)
 
+ProcType = TypedDict('ProcType', {
+    'processor_counter': int,
+    'processor_width': int,
+    'processor_color': ColorValue,
+    'processor_textbuffer': str,
+    'processor_surface': Surface,
+    'cell1': list[str],
+})
+
 processor_speed: float = 1/240
-processor_context: dict[str, object] = {
+processor_context: ProcType = {
     "processor_counter": 0,
     "processor_width": 1,
     "processor_color": 0,
@@ -120,7 +130,7 @@ while True:
                     tr = f"if \"{k[2]}\" not in dir(): global {k[2]}\n{k[2]} = 0\n{tr}"
 
                 try:
-                    exec(tr, processor_context)
+                    exec(tr, processor_context)  # type: ignore
                 except Exception as e:
                     excepp.append(e)
 
@@ -155,11 +165,6 @@ while True:
     processor.textbuffer = ""
 
     display.set_caption(f"{code_textarea.filename} - {len(excepp)} error{'s' if len(excepp) != 1 else ''}")
-    print(processor_context["processor_counter"],
-    processor_context["processor_width"],
-    processor_context["processor_color"],
-    processor_context["processor_textbuffer"],
-    processor_context["cell1"],)
     if False:
         WIN.blits([(FONT.render(var, True, Ctxt2), (WIDTH/2, font_height*(y+1)))
                    for y, var in enumerate((f"{i[0]} = {i[1]!r}"

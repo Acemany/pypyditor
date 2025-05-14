@@ -32,6 +32,7 @@ __all__ = ["logf", "setup", "get_command_color", "mlog_to_python",
 ColorValue = Color | int | str | tuple[int, int, int] | tuple[int, int, int, int]
 
 app_path: Path = Path(__file__).parent
+logfile: Path = app_path/"log.txt"
 
 
 COLORS: dict[_TokenType | None, str] = {
@@ -85,7 +86,7 @@ font.init()
 
 font_height: int = 18
 FONT: font.Font = font.SysFont('Monospace', font_height, bold=True)
-font_width: float = FONT.size("ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # font is not monospaced...
+font_width: float = FONT.size("ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # font may not be monospaced
                               "abcdefghijklmnopqrstuvwxyz"
                               "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
                               "абвгдеёжзийклмнопрстуфхцчшщъыьэюя")[0]/118
@@ -216,14 +217,16 @@ class TextInputManager:
     def filename(self) -> Path | None:
         "File that is open currently(or to which text will save)"
         if self._filename is None:
-            return
+            return None
         return Path(self._filename)
 
-    def open(self, file: str | Path | None = None):
-        if file == '':
+    def open(self, file: str | Path | None = None) -> "TextInputManager":
+        if file == '' or file is None:
             file = askopenas()
-        if not file:
-            return
+            if not file:
+                return self
+        if not Path(file).is_file():
+            Path(file).touch()
         self._filename = file
         with open(file, 'r', encoding='utf-8') as f:
             self.value = f.read().split('\n')
@@ -257,8 +260,8 @@ class TextInputManager:
                     if e.mod & KMOD_SHIFT:
                         Thread(target=self.save, args=('',)).start()
                         return
-                    else:
-                        self.save()
+                    self.save()
+                    return
                 case 111:  # K_O
                     Thread(target=self.open, args=('',)).start()
                     return
@@ -480,6 +483,7 @@ class TextInputVisualizer:
 
     def save(self, file: str | Path | None = None) -> "TextInputVisualizer":
         self._manager.save(file)
+        self._try_lint()
         return self
 
     def close(self, save: bool = True):
@@ -487,16 +491,6 @@ class TextInputVisualizer:
             self.save()
         squit()
         sysexit()
-
-    def _try_lint(self, file: str | Path | None = None):
-        if file is None:
-            self._lexer = guess_lexer(str(self)[:1000])
-        else:
-            if self.value:
-                self._lexer = guess_lexer_for_filename(file, str(self)[:1000])()
-            else:
-                self._lexer = get_lexer_for_filename(file)
-        self._require_rerender()
 
     def update(self, events: list[event.Event]):
         value_before = self.value
@@ -533,6 +527,17 @@ class TextInputVisualizer:
                     self._manager.cursor_pos.y = max(0, min(int(mouse_pos[1]-self._v_offset)//font_height, len(self._manager)-1))
                     self._manager.cursor_pos.x = max(0, min(int(mouse_pos[0]//font_width-self._linelog), len(self._manager.cur_line)))
 
+    def _try_lint(self, file: str | Path | None = None):
+        if file is None:
+            self._lexer = guess_lexer(str(self)[:1000])
+        else:
+            if self.value:
+                self._lexer = guess_lexer_for_filename(file, str(self)[:1000])()
+            else:
+                self._lexer = get_lexer_for_filename(file)
+        self._require_rerender()
+        print(f'{self._lexer!r}')  # TODO
+
     def _require_rerender(self):
         self._rerender_required = True
 
@@ -554,13 +559,12 @@ class TextInputVisualizer:
                 if '\n' in value:
                     tx = len(value.split('\n')[-1])
                     ty += value.count('\n')
-                else:
-                    if value.strip():
-                        clr = get_command_color(ttype, value)
-                        self._surface.blit(FONT.render(value, True, clr),
-                                           (font_width*(self._linelog+0.5)+tx*font_width,
-                                            ty*font_height+self._v_offset, font_width*(self._linelog), font_height))
-                    tx += len(value)
+                if value.strip():
+                    clr = get_command_color(ttype, value)
+                    self._surface.blit(FONT.render(value, True, clr),
+                                        (font_width*(self._linelog+0.5)+tx*font_width,
+                                        ty*font_height+self._v_offset, font_width*(self._linelog), font_height))
+                tx += len(value)
 
         if self._cursor_visible:
             draw.rect(self._surface, (255, 255, 255),
@@ -604,7 +608,7 @@ def logf(err: str | Exception, warn: int = 0):
     """
 
     warn_level = "IWE"[warn]
-    with open(app_path/'log.txt', 'a', encoding='utf-8') as f:
+    with open(logfile, 'a', encoding='utf-8') as f:
         f.write(f'[{warn_level}]-{str(unixtime())}:\n{err}\n\n')
 
 
@@ -673,8 +677,8 @@ def setup():
             \nfrom random import random\
             \nfrom pygame import draw\
             \nfrom mlog_lib import raw2d""")
-    with open(app_path/'log.txt', 'w', encoding="utf-8") as f:
-        f.write('')
+    if not logfile.exists():
+        logfile.touch()
 
 
 def get_command_color(token: _TokenType, v: str = 'None') -> tuple[int, int, int]:

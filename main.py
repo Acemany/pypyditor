@@ -35,7 +35,7 @@ events: list[event.Event]
 key.set_repeat(200, 100)
 key.start_text_input()
 
-code_textarea: TextInputVisualizer = TextInputVisualizer(TextInputManager().open(save_path/"pyexa.py"),
+code_textarea: TextInputVisualizer = TextInputVisualizer(TextInputManager().open(),
                                                          FONT, True, Ctxt,
                                                          500, 2)
 
@@ -104,7 +104,7 @@ while True:
 
     for e in events:
         if e.type == QUIT or keys_pressed[K_ESCAPE]:
-            code_textarea.close()
+            code_textarea.close(False)
 
     code_textarea.update(events)
 
